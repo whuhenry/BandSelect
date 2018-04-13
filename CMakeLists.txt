@@ -8,6 +8,12 @@ if (GDAL_FOUND)
     include_directories(${GDAL_INCLUDE_DIR})
 endif ()
 
-add_executable(BandSelect main.cpp)
+find_package(CUDA REQUIRED)
 
-target_link_libraries(BandSelect ${GDAL_LIBRARY})
+set(Boost_USE_STATIC_LIBS        ON)
+find_package(Boost REQUIRED COMPONENTS program_options log)
+
+cuda_add_executable(BandSelect main.cpp SpectralClusterSelector.cpp SpectralClusterSelector.h SpectralClusterSelector.cu)
+#add_executable(BandSelect main.cpp SpectralClusterSelector.cpp SpectralClusterSelector.h)
+
+target_link_libraries(BandSelect ${GDAL_LIBRARY} Boost::program_options Boost::log)
