@@ -4,8 +4,8 @@
 
 #include "SpectralClusterSelector.h"
 
-#include <eigen3/Eigen/Dense>
-#include <eigen3/Eigen/Eigenvalues>
+#include <Eigen/Dense>
+#include <Eigen/Eigenvalues>
 #include <boost/log/trivial.hpp>
 #include <iostream>
 
@@ -25,15 +25,19 @@ void SpectralClusterSelector::solve() {
         info.min = (uint16_t)minmax[0];
         info.max = (uint16_t)minmax[1];
         int *histogram = new int[info.max - info.min + 1];
+        memset(histogram, 0, (info.max - info.min + 1) * sizeof(int));
         dataset_->GetRasterBand(i)->GetHistogram(info.min - 0.5,
                                                  info.max + 0.5,
                                                  info.max - info.min + 1,
                                                  histogram,
                                                  FALSE, FALSE, nullptr, nullptr);
+
         info.entropy = 0;
-        for (int pixel_val = info.min; pixel_val <= info.max; ++pixel_val) {
-            double probability = (double)histogram[pixel_val] / (double)pixel_count;
-            info.entropy -= probability * log2(probability);
+        for (int pixel_val = 0; pixel_val <= info.max - info.min + 1; ++pixel_val) {
+            if (0 != histogram[pixel_val]) {
+                double probability = histogram[pixel_val] / (double)pixel_count;
+                info.entropy -= probability * log2(probability);
+            }
         }
         delete[] histogram;
         histogram = nullptr;
@@ -74,7 +78,7 @@ void SpectralClusterSelector::solve() {
 //    Eigen::MatrixXd laplacian_matrix = diag_matrix - similar_matrix;
 
     double* similar_matrix_buf = new double[bands_ * bands_];
-    compute_similar_matrix_gpu(img_data_, similar_matrix_buf, bands_info_, rows_ * cols_, bands_);
+    compute_similar_matrix_gpu(img_data_, similar_matrix_buf, bands_info_, rows_, cols_, bands_);
     Eigen::MatrixXd similar_matrix(bands_, bands_);
     Eigen::MatrixXd diag_matrix(bands_, bands_);
     diag_matrix.setZero();
@@ -85,6 +89,7 @@ void SpectralClusterSelector::solve() {
         }
     }
     Eigen::MatrixXd laplacian_matrix = diag_matrix - similar_matrix;
+    std::cout << similar_matrix;
 
     Eigen::EigenSolver<Eigen::MatrixXd> es(laplacian_matrix);
     auto eigen_value = es.eigenvalues();

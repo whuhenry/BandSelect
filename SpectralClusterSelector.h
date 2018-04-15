@@ -31,9 +31,14 @@ private:
     void load_data();
 };
 
-__global__ void compute_similar_matrix_kernel(unsigned short *img_data, double *similar_matrix,
-                                       BandInfo* bands_info, int pixel_count, int band_count);
+
+
 void compute_similar_matrix_gpu(unsigned short *h_img_data, double *h_similar_matrix,
-                                BandInfo* h_bands_info, int pixel_count, int band_count);
+                                BandInfo* h_bands_info, int rows, int cols, int band_count);
+
+__global__ void compute_joint_histogram(unsigned short *d_img_data, int *d_joint_histogram,
+                                        int band_idx1, int band_idx2, int pixel_count, int cols, int rows, int band_count);
+
+__global__ void compute_joint_entropy(int* d_joint_histogram, double *d_joint_entropy_partial);
 
 #endif //BANDSELECT_SPECTRALCLUSTERSELECTOR_H
