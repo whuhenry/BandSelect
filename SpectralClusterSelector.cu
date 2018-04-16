@@ -8,8 +8,8 @@ const int thread_per_block = thread_per_dim * thread_per_dim;
 const int max_intensity = 4096;
 const int max_intensity_square = max_intensity * max_intensity;
 
-void compute_similar_matrix_gpu(unsigned short *h_img_data, double *h_similar_matrix,
-                                                         BandInfo* h_bands_info, int rows, int cols, int band_count) {
+void compute_similar_matrix_gpu(unsigned short *h_img_data, double *h_joint_entropy,
+                                int rows, int cols, int band_count) {
     dim3 thread_size(thread_per_dim, thread_per_dim);
     dim3 block_size;
     block_size.x = (cols + thread_size.x - 1) / thread_size.x;
@@ -20,9 +20,8 @@ void compute_similar_matrix_gpu(unsigned short *h_img_data, double *h_similar_ma
     cudaMemcpy(d_img_data, h_img_data, rows * cols * band_count * sizeof(unsigned short), cudaMemcpyHostToDevice);
     int *d_joint_histogram;
     cudaMalloc(&d_joint_histogram, max_intensity * max_intensity * sizeof(int));
-    double *d_joint_entropy_partial, h_joint_entropy;
-    h_joint_entropy = 0;
-    cudaMalloc(&d_joint_entropy_partial, entropy_block_size * sizeof(double));
+    double *d_joint_entropy_partial, entropy_sum;
+    cudaMalloc(&d_joint_entropy_partial, max_intensity_square * sizeof(double));
 
     for(int i = 0; i < band_count; ++i) {
         for (int j = i; j < band_count; ++j) {
@@ -34,10 +33,33 @@ void compute_similar_matrix_gpu(unsigned short *h_img_data, double *h_similar_ma
                                                                  band_count);
 
             compute_joint_entropy<<<entropy_block_size, thread_per_block>>>(d_joint_histogram,
-                                                                       d_joint_entropy_partial);
-            cudaMemcpy(&h_joint_entropy, d_joint_entropy_partial, sizeof(double), cudaMemcpyDeviceToHost);
-            h_similar_matrix[i * band_count + j] = h_similar_matrix[j * band_count + i]
-                    = h_bands_info[i].entropy + h_bands_info[j].entropy - h_joint_entropy;
+                                                                       d_joint_entropy_partial, rows * cols);
+
+//            double* tmp_buf = new double[max_intensity_square];
+//            cudaMemcpy(tmp_buf, d_joint_entropy_partial, max_intensity_square *sizeof(double), cudaMemcpyDeviceToHost);
+//            double sum = 0;
+//            for(int k = 0; k < max_intensity_square; ++k)
+//            {
+//                sum += tmp_buf[k];
+//            }
+
+            int d_joint_entropy_partial_len = max_intensity_square;
+            int grid_dim = entropy_block_size;
+            while (grid_dim > 0){
+                sum_array<<<grid_dim, thread_per_block>>>(d_joint_entropy_partial,
+                        d_joint_entropy_partial,
+                        d_joint_entropy_partial_len);
+
+                if (grid_dim == 1) {
+                    break;
+                }
+                d_joint_entropy_partial_len = grid_dim;
+                grid_dim = (grid_dim + thread_per_block - 1) / thread_per_block;
+            };
+
+            cudaMemcpy(&entropy_sum, d_joint_entropy_partial, sizeof(double), cudaMemcpyDeviceToHost);
+
+            h_joint_entropy[i * band_count + j] = h_joint_entropy[j * band_count + i] = entropy_sum;
 
         }
     }
@@ -60,42 +82,39 @@ __global__ void compute_joint_histogram(unsigned short *d_img_data, int *d_joint
 
 }
 
-__global__ void compute_joint_entropy(int* d_joint_histogram, double *d_joint_entropy_partial) {
-    __shared__ double partial_sum[thread_per_block];
-
-    int his_idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void compute_joint_entropy(int* d_joint_histogram, double *d_joint_entropy_partial, int pixel_count) {
+    int his_idx = blockIdx.x * thread_per_block + threadIdx.x;
 
     if (his_idx < max_intensity_square && 0 != d_joint_histogram[his_idx]) {
-        printf("his = %d\n", his_idx);
-        double probability = d_joint_histogram[his_idx] / (double)max_intensity_square;
-        partial_sum[threadIdx.x] = -probability * log2(probability);
+        double probability = d_joint_histogram[his_idx] / (double)pixel_count;
+        d_joint_entropy_partial[his_idx] = -probability * log2(probability);
     } else {
-        partial_sum[threadIdx.x] = 0.0;
+        d_joint_entropy_partial[his_idx] = 0.0;
     }
+}
 
+__global__ void sum_array(double* d_array_in, double* d_array_out, int len) {
+    __shared__ double partial_sum[thread_per_block];
+    int tid = threadIdx.x;
+    int array_idx = blockIdx.x * blockDim.x + tid;
+
+    if (array_idx > len) {
+       partial_sum[tid] = 0.0;
+    } else {
+        partial_sum[tid] = d_array_in[array_idx];
+    }
     __syncthreads();
 
-    for(int stride = thread_per_block/2; stride > 0; stride/=2)
+    for(int stride = thread_per_block / 2; stride > 0; stride/=2)
     {
-        if(threadIdx.x < stride) {
-            partial_sum[threadIdx.x]+=partial_sum[threadIdx.x+stride];
+        if(tid < stride) {
+            partial_sum[tid]+= partial_sum[tid + stride];
         }
         __syncthreads();
     }
 
-    if (threadIdx.x == 0) {
-        d_joint_entropy_partial[blockIdx.x] = partial_sum[0];
-        __syncthreads();
-        for(int stride = (blockDim.x + 1)/2; stride > 1; stride = (stride + 1) / 2)
-        {
-            if (blockIdx.x<stride && stride + blockIdx.x < max_intensity_square) {
-                d_joint_entropy_partial[blockIdx.x] += d_joint_entropy_partial[blockIdx.x+stride];
-            }
-            __syncthreads();
-        }
+    if (tid == 0) {
+        d_array_out[blockIdx.x] = partial_sum[0];
     }
 
-    if(blockIdx.x == 0 && threadIdx.x == 0) {
-        d_joint_entropy_partial[0] += d_joint_entropy_partial[1];
-    }
 }
