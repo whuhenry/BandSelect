@@ -15,12 +15,7 @@ find_package(Eigen3 REQUIRED)
 set(Boost_USE_STATIC_LIBS        ON)
 find_package(Boost REQUIRED COMPONENTS program_options log)
 
-find_package(OpenCV REQUIRED)
-if (OpenCV_FOUND)
-    include_directories(${OpenCV_INCLUDE_DIR})
-endif()
-
 cuda_add_executable(BandSelect main.cpp SpectralClusterSelector.cpp SpectralClusterSelector.h SpectralClusterSelector.cu)
 #add_executable(BandSelect main.cpp SpectralClusterSelector.cpp SpectralClusterSelector.h)
 
-target_link_libraries(BandSelect ${GDAL_LIBRARY} Boost::program_options Boost::log Eigen3::Eigen ${OpenCV_LIBRARIES})
+target_link_libraries(BandSelect ${GDAL_LIBRARY} Boost::program_options Boost::log Eigen3::Eigen)

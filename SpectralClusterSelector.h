@@ -6,10 +6,12 @@
 #ifndef BANDSELECT_SPECTRALCLUSTERSELECTOR_H
 #define BANDSELECT_SPECTRALCLUSTERSELECTOR_H
 
-#include <cuda_runtime.h>
 #include <string>
 #include <vector>
 #include <gdal_priv.h>
+#include <Eigen/Core>
+
+#include <cuda_runtime.h>
 
 struct BandInfo {
     unsigned short min;
@@ -28,6 +30,8 @@ private:
     int rows_, cols_, bands_;
     GDALDataset *dataset_;
     void load_data();
+
+    void kmeans(std::vector<Eigen::VectorXd> data, std::vector<int>& out_label, std::vector<Eigen::VectorXd>& out_center);
 };
 
 

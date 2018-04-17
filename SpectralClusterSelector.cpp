@@ -9,7 +9,6 @@
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
 #include <boost/log/trivial.hpp>
-#include <opencv2/core.hpp>
 
 void SpectralClusterSelector::solve() {
     BOOST_LOG_TRIVIAL(info) << "load data start";
@@ -107,22 +106,26 @@ void SpectralClusterSelector::solve() {
                          return val1.first < val2.first;
                      });
 
-    for (int i = 0; i < selected_count_; ++i) {
-        std::cout << eigen_result[i].first << " " << eigen_result[i].second.transpose() << std::endl;
-    }
+//    for (int i = 0; i < selected_count_; ++i) {
+//        std::cout << eigen_result[i].first << " " << eigen_result[i].second.transpose() << std::endl;
+//    }
 
-    cv::Mat points(bands_, selected_count_, CV_32F);
-    cv::Mat best_labels, center;
-    for(int i = 0; i < bands_; ++i) {
+    std::vector<Eigen::VectorXd> data;
+    for (int i = 0; i < bands_; ++i) {
+        Eigen::VectorXd tmp_data(selected_count_);
         for (int j = 0; j < selected_count_; ++j) {
-            points.at<float>(i, j) = eigen_result[j].second[i];
+            tmp_data[j] = eigen_result[j].second[i];
         }
+        tmp_data.normalize();
+        data.push_back(tmp_data);
     }
-    double t = cv::kmeans(points, selected_count_, best_labels,
-                          cv::TermCriteria(),
-                          10, cv::KMEANS_RANDOM_CENTERS, center);
 
-    std::cout << best_labels;
+    std::vector<int> label;
+    std::vector<Eigen::VectorXd> center;
+    kmeans(data, label, center);
+    for (int i = 0; i < selected_count_; ++i) {
+        std::cout << center[i].transpose() << std::endl;
+    }
 
     if (nullptr != img_data_) {
         delete[] img_data_;
@@ -160,4 +163,79 @@ void SpectralClusterSelector::load_data() {
 
     GDALClose(dataset_);
     dataset_ = nullptr;
+}
+
+void SpectralClusterSelector::kmeans(std::vector<Eigen::VectorXd> data,
+                                     std::vector<int>& out_label,
+                                     std::vector<Eigen::VectorXd>& out_center) {
+    out_label.resize(bands_);
+
+    //choose center random
+    std::default_random_engine generator(time(nullptr));
+    std::uniform_int_distribution<int> distribution(0, bands_ - 1);
+    out_center.push_back(data[distribution(generator)]);
+    double sum_distance, max_sum_distance = -1.0;
+    int center_idx;
+    for (int i = 1; i < selected_count_; ++i) {
+        for (int j = 0; j < bands_; ++j) {
+            sum_distance = 0;
+            for (int k = 0; k < i; ++k) {
+                sum_distance += (data[j] - out_center[k]).norm();
+            }
+            if (sum_distance > max_sum_distance) {
+                max_sum_distance = sum_distance;
+                center_idx = j;
+            }
+        }
+        out_center.push_back(data[center_idx]);
+    }
+
+
+
+    std::vector<double> delta_center;
+    delta_center.resize(selected_count_);
+
+    int mark, iter_num = 0;
+    double min_distance, max_delta;
+    do {
+        for(int i = 0; i < bands_; ++i) {
+            mark = -1;
+            min_distance = std::numeric_limits<double>::max();
+            for (int j = 0; j < selected_count_; ++j) {
+                double distance = (data[i] - out_center[j]).norm();
+                if (distance < min_distance) {
+                    min_distance = distance;
+                    mark = j;
+                }
+            }
+            out_label[i] = mark;
+        }
+
+        std::vector<Eigen::VectorXd> new_center;
+        std::vector<int> label_count;
+        for (int i = 0; i < selected_count_; ++i) {
+            Eigen::VectorXd tmp_center(selected_count_);
+            tmp_center.setZero();
+            new_center.push_back(tmp_center);
+            label_count.push_back(0);
+        }
+        for (int i = 0; i < bands_; ++i) {
+            new_center[out_label[i]] += data[i];
+            ++label_count[out_label[i]];
+        }
+
+        max_delta = -1.0;
+        for (int i = 0; i < selected_count_; ++i) {
+            new_center[i] /= label_count[i];
+            double tmp_dis = (new_center[i] - out_center[i]).norm();
+            if (tmp_dis > max_delta) {
+                max_delta = tmp_dis;
+            }
+        }
+        out_center.swap(new_center);
+        ++iter_num;
+        if (iter_num > 20) {
+            break;
+        }
+    } while( max_delta > 0.000000001);
 }
