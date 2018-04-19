@@ -1,10 +1,12 @@
-#include "SpectralClusterSelector.h"
+#include "gpu_mi.h"
 #include <device_launch_parameters.h>
+#include <cmath>
 
 const int thread_per_dim = 32;
 const int thread_per_block = thread_per_dim * thread_per_dim;
 const int max_intensity = 4096;
 const int max_intensity_square = max_intensity * max_intensity;
+const int gain = 1;
 
 void compute_similar_matrix_gpu(unsigned short *h_img_data, double *h_joint_entropy,
                                 int rows, int cols, int band_count) {
@@ -65,8 +67,16 @@ __global__ void compute_joint_histogram(unsigned short *d_img_data, int *d_joint
     int pixel_idx_y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (pixel_idx_x < cols && pixel_idx_y < rows) {
-        unsigned short pixel_idx1 = d_img_data[band_idx1 * pixel_count + pixel_idx_y * cols + pixel_idx_x];
-        unsigned short pixel_idx2 = d_img_data[band_idx2 * pixel_count + pixel_idx_y * cols + pixel_idx_x];
+        unsigned short pixel_idx1 = d_img_data[band_idx1 * pixel_count + pixel_idx_y * cols + pixel_idx_x] / gain;
+        unsigned short pixel_idx2 = d_img_data[band_idx2 * pixel_count + pixel_idx_y * cols + pixel_idx_x] / gain;
+        if(pixel_idx1 >= max_intensity)
+        {
+            pixel_idx1 = max_intensity - 1;
+        }
+        if(pixel_idx2 >= max_intensity)
+        {
+            pixel_idx2 = max_intensity - 1;
+        }
         atomicAdd(d_joint_histogram + pixel_idx1 * band_count + pixel_idx2, 1);
     }
 

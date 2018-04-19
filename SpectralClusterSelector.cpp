@@ -9,6 +9,11 @@
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
 #include <boost/log/trivial.hpp>
+#include <random>
+
+#include "gpu_mi.h"
+#include <complex.h>
+
 
 void SpectralClusterSelector::solve() {
     BOOST_LOG_TRIVIAL(info) << "load data start";
@@ -16,38 +21,43 @@ void SpectralClusterSelector::solve() {
     BOOST_LOG_TRIVIAL(info) << "load data finished";
 
     //compute similar matrix
-//    Eigen::MatrixXd similar_matrix(bands_, bands_);
-//    similar_matrix.setZero();
-//    Eigen::MatrixXd diag_matrix(bands_, bands_);
-//    diag_matrix.setZero();
-//    int h_x, h_y;
-//    for (int i = 0; i < bands_; ++i) {
-//        int count_x = bands_info_[i].max - bands_info_[i].min + 1;
-//        BOOST_LOG_TRIVIAL(info) << i << " bands start";
-//        for (int j = i + 1; j < bands_; ++j) {
-//            int count_y = bands_info_[j].max - bands_info_[j].min + 1;
-//            int *histogram_2d = new int[count_x * count_y];
-//            for (int pixel_idx = 0; pixel_idx < pixel_count; ++pixel_idx) {
-//                h_x = img_data_[i * pixel_count + pixel_idx] - bands_info_[i].min;
-//                h_y = img_data_[j * pixel_count + pixel_idx] - bands_info_[j].min;
-//                ++histogram_2d[h_x * count_y + h_y];
-//            }
-//            double joint_entropy = 0;
-//            for (int x_idx = 0; x_idx < count_x; ++x_idx) {
-//                for (int y_idx = 0; y_idx < count_y; ++y_idx) {
-//                    if (0 != histogram_2d[x_idx * count_y + y_idx]) {
-//                        double probability = histogram_2d[x_idx * count_y + y_idx] / (double)pixel_count;
-//                        joint_entropy -= probability * log2(probability);
-//                    }
-//                }
-//            }
-//            delete[] histogram_2d;
-//            histogram_2d = nullptr;
-//            similar_matrix(i, j) = bands_info_[i].entropy + bands_info_[j].entropy - joint_entropy;
-//            diag_matrix(i, i) += similar_matrix(i, j);
-//        }
-//        BOOST_LOG_TRIVIAL(info) << i << " bands finished";
-//    }
+
+    //int pixel_count = rows_ * cols_;
+    //int h_x, h_y;
+    //double minmaxi[2], minmaxj[2];
+    //for (int i = 0; i < bands_; ++i) {
+    //    dataset_->GetRasterBand(i + 1)->ComputeRasterMinMax(FALSE, minmaxi);
+    //    int count_x = minmaxi[1] - minmaxi[0] + 1;
+    //    BOOST_LOG_TRIVIAL(info) << i << " bands start";
+    //    for (int j = i + 1; j < bands_; ++j) {
+    //        dataset_->GetRasterBand(j + 1)->ComputeRasterMinMax(FALSE, minmaxj);
+    //        int count_y = minmaxj[1] - minmaxj[0] + 1;
+    //        int *histogram_2d = new int[count_x * count_y];
+    //        for(int k = 0; k < count_y * count_x; ++k)
+    //        {
+    //            histogram_2d[k] = 0;
+    //        }
+    //        for (int pixel_idx = 0; pixel_idx < pixel_count; ++pixel_idx) {
+    //            h_x = img_data_[i * pixel_count + pixel_idx] - minmaxi[0];
+    //            h_y = img_data_[j * pixel_count + pixel_idx] - minmaxj[0];
+    //            ++histogram_2d[h_x * count_y + h_y];
+    //        }
+    //        double joint_entropy = 0;
+    //        for (int x_idx = 0; x_idx < count_x; ++x_idx) {
+    //            for (int y_idx = 0; y_idx < count_y; ++y_idx) {
+    //                if (0 != histogram_2d[x_idx * count_y + y_idx]) {
+    //                    double probability = histogram_2d[x_idx * count_y + y_idx] / (double)pixel_count;
+    //                    joint_entropy -= probability * log2(probability);
+    //                }
+    //            }
+    //        }
+    //        delete[] histogram_2d;
+    //        histogram_2d = nullptr;
+    //        //similar_matrix(i, j) = bands_info_[i].entropy + bands_info_[j].entropy - joint_entropy;
+    //        //diag_matrix(i, i) += similar_matrix(i, j);
+    //    }
+    //    BOOST_LOG_TRIVIAL(info) << i << " bands finished";
+    //}
 //    Eigen::MatrixXd laplacian_matrix = diag_matrix - similar_matrix;
 
     double* similar_matrix_buf = new double[bands_ * bands_];
@@ -75,19 +85,58 @@ void SpectralClusterSelector::solve() {
         ifs.close();
     }
 
-    Eigen::MatrixXd similar_matrix(bands_, bands_);
-    Eigen::MatrixXd diag_matrix(bands_, bands_);
-    diag_matrix.setZero();
-    for (int i = 0; i < bands_; ++i) {
-        for (int j = 0; j < bands_; ++j) {
-            similar_matrix(i, j) = similar_matrix_buf[i * bands_ + j];
+    int valid_band_count = 0;
+    double valid_threads_hold = 8.0;
+    for (int i = 0; i < bands_; ++i)
+    {
+        if(similar_matrix_buf[i * bands_ + i] > valid_threads_hold)
+        {
+            valid_band_count++;
         }
     }
+
+    Eigen::MatrixXd similar_matrix(valid_band_count, valid_band_count);
+    similar_matrix.setZero();
+    Eigen::MatrixXd diag_matrix(valid_band_count, valid_band_count);
+    diag_matrix.setZero();
+    for (int i = 0; i < valid_band_count; ++i) {
+        if(similar_matrix_buf[i * bands_ + i] <= valid_threads_hold)
+        {
+            continue;
+        }
+        for (int j = 0; j < valid_band_count; ++j) {
+            if (similar_matrix_buf[j * bands_ + j] <= valid_threads_hold)
+            {
+                continue;
+            }
+            similar_matrix(i, j) = similar_matrix_buf[bands_ * i + j];
+        }
+    }
+
+    //int count[65536] = {0};
+    //for(int i = 0; i < rows_ * cols_; ++i)
+    //{
+    //    ++count[img_data_[i]];
+    //}
+    //double entropy = 0;
+    //for(int i = 0; i < 65536; ++i)
+    //{
+    //    if(count[i] != 0)
+    //    {
+    //        double p = count[i] / (double)(rows_ * cols_);
+    //        entropy -= p * log2(p);
+    //    }
+    //}
+
     //std::cout << similar_matrix << std::endl;
-    for (int i = 0; i < bands_; ++i) {
-        for (int j = 0; j < bands_; ++j) {
+    for (int i = 0; i < valid_band_count; ++i) {
+        for (int j = 0; j < valid_band_count; ++j) {
             similar_matrix(i, j) = similar_matrix(i, i) + similar_matrix(j, j) - similar_matrix(i, j);
             diag_matrix(i, i) += similar_matrix(i, j);
+            if(similar_matrix(i, j) < 0)
+            {
+                break;
+            }
         }
     }
     Eigen::MatrixXd laplacian_matrix = diag_matrix - similar_matrix;
@@ -111,7 +160,7 @@ void SpectralClusterSelector::solve() {
 //    }
 
     std::vector<Eigen::VectorXd> data;
-    for (int i = 0; i < bands_; ++i) {
+    for (int i = 0; i < valid_band_count; ++i) {
         Eigen::VectorXd tmp_data(selected_count_);
         for (int j = 0; j < selected_count_; ++j) {
             tmp_data[j] = eigen_result[j].second[i];
@@ -124,13 +173,30 @@ void SpectralClusterSelector::solve() {
     std::vector<Eigen::VectorXd> center;
     kmeans(data, label, center);
     for (int i = 0; i < selected_count_; ++i) {
-        std::cout << center[i].transpose() << std::endl;
+        double min_distance = std::numeric_limits<double>::max();
+        int band_idx = -1;
+        for(int k = 0; k < valid_band_count; ++k)
+        {
+            if(label[k] == i)
+            {
+                double distance = (data[k] - center[i]).norm();
+                if(distance < min_distance)
+                {
+                    min_distance = distance;
+                    band_idx = k;
+                }
+            }
+        }
+        std::cout << "label :" << i << "; band_idx :" << band_idx << std::endl;
     }
 
     if (nullptr != img_data_) {
         delete[] img_data_;
         img_data_ = nullptr;
     }
+
+    GDALClose(dataset_);
+    dataset_ = nullptr;
 }
 
 void SpectralClusterSelector::load_data() {
@@ -161,23 +227,33 @@ void SpectralClusterSelector::load_data() {
         dataset_->RasterIO(GF_Read, 0, 0, cols_, rows_, img_data_, cols_, rows_, GDT_UInt16, bands_, nullptr, 0, 0, 0);
     }
 
-    GDALClose(dataset_);
-    dataset_ = nullptr;
 }
 
 void SpectralClusterSelector::kmeans(std::vector<Eigen::VectorXd> data,
                                      std::vector<int>& out_label,
                                      std::vector<Eigen::VectorXd>& out_center) {
-    out_label.resize(bands_);
+    int valid_band_count = data.size();
+    out_label.resize(valid_band_count);
 
     //choose center random
-    std::default_random_engine generator(time(nullptr));
-    std::uniform_int_distribution<int> distribution(0, bands_ - 1);
+    std::default_random_engine generator(clock());
+    std::uniform_int_distribution<int> distribution(0, valid_band_count - 1);
     out_center.push_back(data[distribution(generator)]);
     double sum_distance, max_sum_distance = -1.0;
     int center_idx;
+    bool *selected = new bool[valid_band_count];
+    for(int i = 0; i< valid_band_count; ++i)
+    {
+        selected[i] = false;
+    }
     for (int i = 1; i < selected_count_; ++i) {
-        for (int j = 0; j < bands_; ++j) {
+        center_idx = -1;
+        max_sum_distance = -1.0;
+        for (int j = 0; j < valid_band_count; ++j) {
+            if(selected[j])
+            {
+                continue;
+            }
             sum_distance = 0;
             for (int k = 0; k < i; ++k) {
                 sum_distance += (data[j] - out_center[k]).norm();
@@ -188,9 +264,10 @@ void SpectralClusterSelector::kmeans(std::vector<Eigen::VectorXd> data,
             }
         }
         out_center.push_back(data[center_idx]);
+        selected[center_idx] = true;
     }
 
-
+    delete[] selected;
 
     std::vector<double> delta_center;
     delta_center.resize(selected_count_);
@@ -198,7 +275,7 @@ void SpectralClusterSelector::kmeans(std::vector<Eigen::VectorXd> data,
     int mark, iter_num = 0;
     double min_distance, max_delta;
     do {
-        for(int i = 0; i < bands_; ++i) {
+        for(int i = 0; i < valid_band_count; ++i) {
             mark = -1;
             min_distance = std::numeric_limits<double>::max();
             for (int j = 0; j < selected_count_; ++j) {
@@ -219,7 +296,7 @@ void SpectralClusterSelector::kmeans(std::vector<Eigen::VectorXd> data,
             new_center.push_back(tmp_center);
             label_count.push_back(0);
         }
-        for (int i = 0; i < bands_; ++i) {
+        for (int i = 0; i < valid_band_count; ++i) {
             new_center[out_label[i]] += data[i];
             ++label_count[out_label[i]];
         }
