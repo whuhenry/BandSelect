@@ -61,7 +61,7 @@ void SpectralClusterSelector::solve() {
 //    Eigen::MatrixXd laplacian_matrix = diag_matrix - similar_matrix;
 
     double* similar_matrix_buf = new double[bands_ * bands_];
-    if (false) {
+    if (true) {
         BOOST_LOG_TRIVIAL(info) << "cuda start";
         compute_similar_matrix_gpu(img_data_, similar_matrix_buf, rows_, cols_, bands_);
         BOOST_LOG_TRIVIAL(info) << "cuda finished";

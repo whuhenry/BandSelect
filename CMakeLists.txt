@@ -20,3 +20,5 @@ cuda_add_executable(BandSelect main.cpp SpectralClusterSelector.cpp SpectralClus
 #add_executable(BandSelect main.cpp SpectralClusterSelector.cpp SpectralClusterSelector.h)
 
 target_link_libraries(BandSelect ${GDAL_LIBRARY} Boost::program_options Boost::log Eigen3::Eigen)
+
+add_subdirectory(GRBS)
